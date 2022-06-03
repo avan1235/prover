@@ -1,0 +1,58 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.34.4.
+--
+-- see: https://github.com/sol/hpack
+
+name:           prover
+version:        0.1.0.0
+description:    Please see the README on GitHub at <https://github.com/githubuser/prover#readme>
+homepage:       https://github.com/avan1235/prover#readme
+bug-reports:    https://github.com/avan1235/prover/issues
+author:         Maciej Procyk
+maintainer:     m.procyk@student.uw.edu.pl
+copyright:      2022 Maciej Procyk
+license:        BSD3
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    README.md
+    ChangeLog.md
+
+source-repository head
+  type: git
+  location: https://github.com/avan1235/prover
+
+library
+  exposed-modules:
+      Formula
+      Lib
+      Parser
+      Util
+  other-modules:
+      Paths_prover
+  hs-source-dirs:
+      src
+  build-depends:
+      QuickCheck ==2.14.*
+    , base >=4.7 && <5
+    , mtl ==2.2.*
+    , parsec ==3.1.*
+    , random ==1.2.*
+  default-language: Haskell2010
+
+executable prover-exe
+  main-is: Main.hs
+  other-modules:
+      Paths_prover
+  hs-source-dirs:
+      app
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      QuickCheck ==2.14.*
+    , base >=4.7 && <5
+    , mtl ==2.2.*
+    , parsec ==3.1.*
+    , prover
+    , random ==1.2.*
+  default-language: Haskell2010
