@@ -39,7 +39,7 @@ for test in ./tests/A/t*.txt; do
 		else 
 			# abort on unexpected output
 			echo "unexpected output"
-			return -1
+			exit -1
 		fi
 
 	else
@@ -76,7 +76,7 @@ for test in ./tests/B/t*.txt; do
 		else 
 			# abort on unexpected output
 			echo "unexpected output"
-			return -1
+			exit -1
 		fi
 
 	else
@@ -114,7 +114,7 @@ for test in ./tests/C/t*.txt; do
 		else 
 			# abort on unexpected output
 			echo "unexpected output"
-			return -1
+			exit -1
 		fi
 
 	else
