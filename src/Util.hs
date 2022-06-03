@@ -1,9 +1,11 @@
 module Util where
 
 import Debug.Trace (trace)
+import qualified Data.Map as Map
 
 debug :: Show a => a -> String -> a
 debug o name = trace (name ++ " = " ++ show o) o
+
 -- debug o _ = o
 
 update :: Eq a => (a -> b) -> a -> b -> a -> b
@@ -14,6 +16,15 @@ update f a b x
 partitions :: [a] -> [[[a]]]
 partitions [] = [[]]
 partitions (x : xs) = [[x] : yss | yss <- partitions xs] ++ [(x : ys) : yss | (ys : yss) <- partitions xs]
+
+cartProd :: Int -> [a] -> Map.Map Int [[a]]
+cartProd n xs = Map.fromAscList $ map key [1..n]
+  where
+    key x = (x, go x)
+    go 0 = [[]]
+    go n = [x : y | x <- xs, y <- ys]
+      where
+        ys = go (n - 1)
 
 -- all possible ways to split n into the sum of strictly positive integers
 catalan :: Int -> [[Int]]

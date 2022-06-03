@@ -285,6 +285,14 @@ sig (Forall _ phi) = sig phi
 constants :: Signature -> [Term]
 constants s = [Fun c [] | (c, 0) <- s]
 
+universe :: [Term] -> Signature -> [Term]
+universe [] _ = error "expected not empty set constant terms"
+universe ts [] = ts
+universe ts fs = ts ++ universe highOrder fs
+  where
+    arities = map snd fs
+    highOrder = ts
+
 notEmptyOrDummy :: [Term] -> [Term]
 notEmptyOrDummy [] = [Fun "dummy" []]
 notEmptyOrDummy ts = ts
