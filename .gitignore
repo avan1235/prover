@@ -1,0 +1,8 @@
+.stack-work/
+*~
+FO-prover 
+*.hi 
+*.o 
+.stack-work 
+points.txt
+score.txt
