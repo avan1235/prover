@@ -49,23 +49,6 @@ data Formula =
 
 -- type Formula = GenFormula VarName
 
-infixr 8 /\, ∧
-(/\) = And
-(∧) = And
-
-infixr 5 \/, ∨, -->
-(\/) = Or
-(∨) = Or
-(-->) = Implies
-
-infixr 4 <-->
-(<-->) = Iff
-
-infix 9 ===, =/=
-(===), (=/=) :: Term -> Term -> Formula
-u === v = Rel "=" [u, v]
-u =/= v = Not (u === v)
-
 type Substitution = Env Term
 
 -- apply a substitution on all free variables
