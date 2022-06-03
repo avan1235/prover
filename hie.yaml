@@ -1,0 +1,6 @@
+cradle:
+  stack:
+    - path: "./app"
+      component: "prover:exe:prover-exe"
+    - path: "./src"
+      component: "prover:lib"

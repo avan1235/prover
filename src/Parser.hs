@@ -1,16 +1,15 @@
 module Parser where
 
-import System.IO
-import Control.Monad
-import Text.Parsec
-import Text.ParserCombinators.Parsec
-import Text.ParserCombinators.Parsec.Expr
-import Text.ParserCombinators.Parsec.Language
+import System.IO ()
+import Control.Monad ()
+import Text.Parsec ( alphaNum, letter, oneOf, (<|>), parse )
+import Text.ParserCombinators.Parsec ( Parser )
+import Text.ParserCombinators.Parsec.Expr ()
+import Text.ParserCombinators.Parsec.Language ( emptyDef )
 import qualified Text.ParserCombinators.Parsec.Token as Token
 import qualified Text.ParserCombinators.Parsec as Parsec
-import Test.QuickCheck hiding (Fun)
-import Util
-import Formula
+import Util ()
+import Formula ( Formula(..), Term (..) )
 
 languageDef =
    emptyDef { Token.commentStart    = "(-"
@@ -27,8 +26,8 @@ languageDef =
                                       , "Or"
                                       , "Implies"
                                       , "Iff"
-                                    --   , "T"
-                                    --   , "F"
+                                      , "T"
+                                      , "F"
                                       , "Exists"
                                       , "Forall"
                                       ]
@@ -58,7 +57,7 @@ term = parens term
 
 varTerm :: Parser Term
 varTerm = do reserved "Var"
-             reservedOp "\"" 
+             reservedOp "\""
              name <- identifier
              reservedOp "\""
              return $ Var name
@@ -66,7 +65,7 @@ varTerm = do reserved "Var"
 funTerm :: Parser Term
 funTerm = do
     reserved "Fun"
-    reservedOp "\"" 
+    reservedOp "\""
     f <- identifier
     reservedOp "\""
     ts <- list term
@@ -75,9 +74,9 @@ funTerm = do
 list :: Parser a -> Parser [a]
 list parser = do
     reservedOp "["
-    list <- (oneOrMore parser <|> zero)
+    list <- oneOrMore parser <|> zero
     reservedOp "]"
-    return $ list
+    return list
 
 zero :: Parser [a]
 zero = return []
@@ -88,7 +87,7 @@ oneOrMore parser = Parsec.try (more parser) <|> one parser
 one :: Parser a -> Parser [a]
 one parser = do
     a <- parser
-    return $ [a]
+    return [a]
 
 more :: Parser a -> Parser [a]
 more parser = do
@@ -100,7 +99,7 @@ more parser = do
 relFormula :: Parser Formula
 relFormula = do
     reserved "Rel"
-    reservedOp "\"" 
+    reservedOp "\""
     r <- identifier
     reservedOp "\""
     ts <- list term
@@ -110,7 +109,7 @@ relFormula = do
 propFormula :: Parser Formula
 propFormula = do
     reserved "Prop"
-    reservedOp "\"" 
+    reservedOp "\""
     r <- identifier
     reservedOp "\""
     return $ Rel r []
@@ -139,50 +138,43 @@ falseFormula = do reserved "F"
 
 notFormula :: Parser Formula
 notFormula = do reserved "Not"
-                phi <- formula
-                return $ Not phi
+                Not <$> formula
 
 andFormula :: Parser Formula
 andFormula = do reserved "And"
                 phi <- formula
-                psi <- formula
-                return $ And phi psi
-                
+                And phi <$> formula
+
 orFormula :: Parser Formula
 orFormula = do reserved "Or"
                phi <- formula
-               psi <- formula
-               return $ Or phi psi
+               Or phi <$> formula
 
 impliesFormula :: Parser Formula
 impliesFormula = do reserved "Implies"
                     phi <- formula
-                    psi <- formula
-                    return $ Implies phi psi
+                    Implies phi <$> formula
 
 iffFormula :: Parser Formula
 iffFormula = do reserved "Iff"
                 phi <- formula
-                psi <- formula
-                return $ Iff phi psi
+                Iff phi <$> formula
 
 existsFormula :: Parser Formula
 existsFormula = do
     reserved "Exists"
-    reservedOp "\"" 
+    reservedOp "\""
     x <- identifier
     reservedOp "\""
-    phi <- formula
-    return $ Exists x phi
+    Exists x <$> formula
 
 forallFormula :: Parser Formula
 forallFormula = do
     reserved "Forall"
-    reservedOp "\"" 
+    reservedOp "\""
     x <- identifier
     reservedOp "\""
-    phi <- formula
-    return $ Forall x phi
+    Forall x <$> formula
 
 parseString :: String -> Formula
 parseString str =
@@ -191,7 +183,7 @@ parseString str =
         Right r -> r
 
 parseIntegers :: String -> [Integer]
-parseIntegers str = 
+parseIntegers str =
     case parse (list integer)  "" str of
         Left e  -> error $ show e
         Right r -> r
