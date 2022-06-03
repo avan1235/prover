@@ -297,17 +297,19 @@ notEmptyOrDummy :: [Term] -> [Term]
 notEmptyOrDummy [] = [Fun "dummy" []]
 notEmptyOrDummy ts = ts
 
-lattice :: [VarName] -> [Term] -> [Map.Map VarName Term] -> [Map.Map VarName Term]
+type VarAssignment = Map.Map VarName Term
+
+lattice :: [VarName] -> [Term] -> [VarAssignment] -> [VarAssignment]
 lattice [] _ ls = ls
 lattice (x : xs) as ls = lattice xs as $ concatMap (\l -> map (\a -> Map.insert x a l) as) ls
 
-withCaseT :: Map.Map VarName Term -> Term -> Term
+withCaseT :: VarAssignment -> Term -> Term
 withCaseT c (Var n) = case Map.lookup n c of
   Nothing -> Var n
   Just n' -> n'
 withCaseT c (Fun f ts) = Fun f (map (withCaseT c) ts)
 
-withCase :: Formula -> Map.Map VarName Term -> Formula
+withCase :: Formula -> VarAssignment -> Formula
 withCase T _ = T
 withCase F _ = F
 withCase (Rel r ts) c = Rel r (map (withCaseT c) ts)
@@ -328,7 +330,7 @@ groundInstances phi ts = map (withCase phi) cases
 atomicFormulas :: Formula -> [Formula]
 atomicFormulas T = []
 atomicFormulas F = []
-atomicFormulas phi@(Rel _ ts) = [phi]
+atomicFormulas phi@(Rel _ _) = [phi]
 atomicFormulas (Not phi) = atomicFormulas phi
 atomicFormulas (And phi psi) = nub $ atomicFormulas phi ++ atomicFormulas psi
 atomicFormulas (Or phi psi) = nub $ atomicFormulas phi ++ atomicFormulas psi
@@ -348,8 +350,8 @@ sat phi = or [ev int phi `debug` "ev" | int <- fs] `debug` "sat"
     ev int F = False
     ev int atom@(Rel _ _) = int atom
     ev int (Not phi) = not (ev int phi)
-    ev int (Or phi ψ) = ev int phi || ev int ψ
-    ev int (And phi ψ) = ev int phi && ev int ψ
+    ev int (Or phi psi) = ev int phi || ev int psi
+    ev int (And phi psi) = ev int phi && ev int psi
     ev _ phi = error $ "unexpected formula: " ++ show phi
 
 noUniversalPrefix :: Formula -> Formula

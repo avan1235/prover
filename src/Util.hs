@@ -4,9 +4,8 @@ import Debug.Trace (trace)
 import qualified Data.Map as Map
 
 debug :: Show a => a -> String -> a
-debug o name = trace (name ++ " = " ++ show o) o
-
--- debug o _ = o
+debug o _ = o
+--debug o name = trace (name ++ " = " ++ show o) o
 
 update :: Eq a => (a -> b) -> a -> b -> a -> b
 update f a b x
