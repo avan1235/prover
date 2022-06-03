@@ -9,7 +9,7 @@ import Data.List (delete, nub)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import System.IO.Unsafe (unsafePerformIO)
-import Util (update, functions)
+import Util (debug, functions, update)
 
 type VarName = String
 
@@ -76,9 +76,6 @@ fv (Implies phi psi) = nub $ fv phi ++ fv psi
 fv (Iff phi psi) = nub $ fv phi ++ fv psi
 fv (Exists x phi) = delete x $ fv phi
 fv (Forall x phi) = delete x $ fv phi
-
-prop_fv :: Bool
-prop_fv = fv (Exists "x" (Rel "R" [Fun "f" [Var "x", Var "y"], Var "z"])) == ["y", "z"]
 
 renameT :: VarName -> VarName -> Term -> Term
 renameT x y (Var z)
@@ -257,7 +254,13 @@ substitute as vs (phi `Or` psi) = substitute as vs phi `Or` substitute as vs psi
 substitute _ _ f = error $ "found not NNF formula: " ++ show f
 
 skolemise :: Formula -> Formula
-skolemise = pnf . substitute Map.empty [] . fresh . nnf . concretize
+skolemise phi = inPnf
+  where
+    concrete = concretize phi `debug` "concrete"
+    inNnf = nnf concrete `debug` "inNnf"
+    withFresh = fresh inNnf `debug` "withFresh"
+    replaced = substitute Map.empty [] withFresh `debug` "replaced"
+    inPnf = pnf replaced `debug` "inPnf"
 
 type Arity = Int
 
@@ -327,9 +330,10 @@ atomicFormulas (Exists x phi) = atomicFormulas phi
 atomicFormulas (Forall x phi) = atomicFormulas phi
 
 sat :: Formula -> Bool
-sat phi = or [ev int phi | int <- functions atoms [True, False]]
+sat phi = or [ev int phi `debug` "ev" | int <- fs] `debug` "sat"
   where
     atoms = atomicFormulas phi
+    fs = functions atoms [True, False]
 
     ev :: (Formula -> Bool) -> Formula -> Bool
     ev int T = True
@@ -347,15 +351,17 @@ noUniversalPrefix phi = phi
 conjunction :: [Formula] -> Formula
 conjunction = foldr And T
 
-aedecide :: Formula -> Bool
-aedecide phi = not $ sat $ conjunction gi
+tautology :: Formula -> Bool
+tautology phi = not $ sat $ conjunction gi
   where
-    generalized = generalise phi
-    skolemized = skolemise $ Not generalized
-    phi' = noUniversalPrefix skolemized
-    const = notEmptyOrDummy $ constants $ sig phi'
-    gi = groundInstances phi' const
+    gen = generalise phi `debug` "gen"
+    skol = skolemise (Not gen) `debug` "skol"
+    phi' = noUniversalPrefix skol `debug` "phi'"
+    const = notEmptyOrDummy (constants $ sig phi') `debug` "const"
+    gi = groundInstances phi' const `debug` "gi"
 
-type SATSolver = Formula -> Bool
+failing :: Formula
+failing = Exists "y" (Forall "x" (Implies (Rel "a" [Var "y"]) (Rel "a" [Var "x"])))
 
-type FOProver = Formula -> Bool
+test :: Bool
+test = tautology failing

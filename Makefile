@@ -2,7 +2,7 @@
 
 all: FO-prover
 
-FO-prover:
+FO-prover: $(shell find . -name '*.hs')
 	stack build && stack install --local-bin-path ./ && mv prover-exe FO-prover
 
 test: FO-prover

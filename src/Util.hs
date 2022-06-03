@@ -1,9 +1,10 @@
 module Util where
 
-import System.IO.Unsafe (unsafePerformIO)
+import Debug.Trace (trace)
 
-debug :: Show a => String -> a -> a
-debug str x = seq (unsafePerformIO $ do putStr "<"; putStr str; putStr ": "; print x; putStr ">") x
+debug :: Show a => a -> String -> a
+debug o name = trace (name ++ " = " ++ show o) o
+-- debug o _ = o
 
 update :: Eq a => (a -> b) -> a -> b -> a -> b
 update f a b x

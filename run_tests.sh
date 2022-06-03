@@ -35,7 +35,7 @@ for test in ./tests/A/t*.txt; do
 		elif (( $result == "0" )) ; then
 			# failing a positive test gains -2
 			score=$((score - 2))
-			echo "FAIL"
+			echo "FAIL: $( cat "$test" )"
 		else 
 			# abort on unexpected output
 			echo "unexpected output"
@@ -69,7 +69,7 @@ for test in ./tests/B/t*.txt; do
 
 		if (( $result == "1" )) ; then
 			score=$((score - 2))
-			echo "FAIL"
+			echo "FAIL: $( cat "$test" )"
 		elif (( $result == "0" )) ; then
 			score=$((score + 2))
 			echo "WOW"
@@ -107,7 +107,7 @@ for test in ./tests/C/t*.txt; do
 
 		if (( $result == "1" )) ; then
 			score=$((score - 2))
-			echo "FAIL"
+			echo "FAIL: $( cat "$test" )"
 		elif (( $result == "0" )) ; then
 			score=$((score + 0))
 			echo "OK"
