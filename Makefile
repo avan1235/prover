@@ -9,4 +9,4 @@ test: FO-prover
 	./run_tests.sh
 
 clean:
-	rm -rf FO-prover *.hi *.o ./.stack-work ./points.txt ./score.txt
+	rm -rf FO-prover *.hi *.o ./.stack-work ./points.txt ./score.txt ./out ./.idea *.iml

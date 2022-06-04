@@ -9,7 +9,8 @@ import Data.List (delete, nub)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import System.IO.Unsafe (unsafePerformIO)
-import Util (debug, functions, update)
+import Util (functions, update, debug)
+import GHC.List (foldl')
 
 type VarName = String
 
@@ -152,12 +153,6 @@ fresh phi = evalState (go phi) []
         put $ y : xs
         quantifier y <$> go psi
 
-phi :: Formula
-phi = Exists "x" (Exists "x" (Rel "r" [Fun "f" [Var "x", Var "y"]]))
-
-psi :: Formula
-psi = Exists "x" (Rel "r" [Fun "f" [Var "x"]])
-
 notOfNnf :: Formula -> Formula
 notOfNnf (Not T) = T
 notOfNnf (Not F) = F
@@ -256,11 +251,11 @@ substitute _ _ f = error $ "found not NNF formula: " ++ show f
 skolemise :: Formula -> Formula
 skolemise phi = inPnf
   where
-    concrete = concretize phi `debug` "concrete"
-    inNnf = nnf concrete `debug` "inNnf"
-    withFresh = fresh inNnf `debug` "withFresh"
-    replaced = substitute Map.empty [] withFresh `debug` "replaced"
-    inPnf = pnf replaced `debug` "inPnf"
+    concrete = concretize phi
+    inNnf = nnf concrete
+    withFresh = fresh inNnf
+    replaced = substitute Map.empty [] withFresh
+    inPnf = pnf replaced
 
 type Arity = Int
 
@@ -283,7 +278,22 @@ sig (Exists _ phi) = sig phi
 sig (Forall _ phi) = sig phi
 
 constants :: Signature -> [Term]
-constants s = [Fun c [] | (c, 0) <- s]
+constants s = if null xs then [Fun "dummy" []] else xs
+  where
+    xs = [Fun c [] | (c, 0) <- s]
+
+notConstants :: Signature -> Map.Map Arity [FunName]
+notConstants s = foldl' update Map.empty notConst
+  where
+    notConst = filter (\(_, c) -> c > 0) s
+    update acc (n, a) =
+      Map.insert
+        a
+        ( case Map.lookup a acc of
+            Nothing -> [n]
+            Just ns -> n : ns
+        )
+        acc
 
 universe :: [Term] -> Signature -> [Term]
 universe [] _ = error "expected not empty set constant terms"
@@ -292,10 +302,6 @@ universe ts fs = ts ++ universe highOrder fs
   where
     arities = map snd fs
     highOrder = ts
-
-notEmptyOrDummy :: [Term] -> [Term]
-notEmptyOrDummy [] = [Fun "dummy" []]
-notEmptyOrDummy ts = ts
 
 type VarAssignment = Map.Map VarName Term
 
@@ -340,7 +346,7 @@ atomicFormulas (Exists x phi) = atomicFormulas phi
 atomicFormulas (Forall x phi) = atomicFormulas phi
 
 sat :: Formula -> Bool
-sat phi = or [ev int phi `debug` "ev" | int <- fs] `debug` "sat"
+sat phi = or [ev int phi | int <- fs]
   where
     atoms = atomicFormulas phi
     fs = functions atoms [True, False]
@@ -358,17 +364,16 @@ noUniversalPrefix :: Formula -> Formula
 noUniversalPrefix (Forall _ phi) = noUniversalPrefix phi
 noUniversalPrefix phi = phi
 
-conjunction :: [Formula] -> Formula
-conjunction = foldr And T
-
 tautology :: Formula -> Bool
-tautology phi = not $ sat $ conjunction gi
+tautology phi = not $ all sat gi
   where
-    gen = generalise phi `debug` "gen"
-    skol = skolemise (Not gen) `debug` "skol"
-    phi' = noUniversalPrefix skol `debug` "phi'"
-    const = notEmptyOrDummy (constants $ sig phi') `debug` "const"
-    gi = groundInstances phi' const `debug` "gi"
+    gen = generalise phi
+    skol = skolemise (Not gen)
+    phi' = noUniversalPrefix skol
+    s = sig phi'
+    c = constants s `debug` "c"
+    fs = notConstants s `debug` "fs"
+    gi = groundInstances phi' c
 
 failing :: Formula
 failing = Exists "y" (Forall "x" (Implies (Rel "a" [Var "y"]) (Rel "a" [Var "x"])))
