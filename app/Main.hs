@@ -19,9 +19,3 @@ module Main where
        if res
          then putStrLn "1"
          else putStrLn "0"
-
--- import Formula (test)
-
--- main :: IO ()
--- main = do
---   print test

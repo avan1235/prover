@@ -1,14 +1,9 @@
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE UnicodeSyntax #-}
-
 module Formula where
 
 import Control.Monad (liftM, liftM2, replicateM)
 import Control.Monad.Trans.State (State, evalState, get, put)
 import Data.List (delete, intercalate, sort)
 import qualified Data.Map as Map
-import qualified Data.Set as Set
-import System.IO.Unsafe (unsafePerformIO)
 import Util (functions, ordNub, prefixes, update)
 
 type VarName = String
@@ -19,20 +14,9 @@ type RelName = String
 
 data Term = Var VarName | Fun FunName [Term] deriving (Eq, Show, Ord)
 
-varsT :: Term -> [VarName]
-varsT (Var x) = [x]
-varsT (Fun _ ts) = ordNub $ concatMap varsT ts
-
-variants :: VarName -> [VarName]
-variants x = x : [x ++ show n | n <- [0 ..]]
-
 type FunInt a = FunName -> [a] -> a
 
 type Env a = VarName -> a
-
-evalTerm :: FunInt a -> Env a -> Term -> a
-evalTerm _ rho (Var x) = rho x
-evalTerm int rho (Fun f ts) = int f $ map (evalTerm int rho) ts
 
 data Formula
   = F
@@ -47,6 +31,23 @@ data Formula
   | Forall VarName Formula
   deriving (Eq, Show, Ord)
 
+type VarMapping = Map.Map VarName VarName
+
+type Arity = Int
+
+type Signature = [(FunName, Arity)]
+
+type FunSignature = Map.Map Arity [FunName]
+
+type VarAssignment = Map.Map VarName Term
+
+varsT :: Term -> [VarName]
+varsT (Var x) = [x]
+varsT (Fun _ ts) = ordNub $ concatMap varsT ts
+
+variants :: VarName -> [VarName]
+variants x = x : [x ++ show n | n <- [0 ..]]
+
 vars :: Formula -> [VarName]
 vars T = []
 vars F = []
@@ -58,12 +59,6 @@ vars (Implies phi psi) = ordNub $ vars phi ++ vars psi
 vars (Iff phi psi) = ordNub $ vars phi ++ vars psi
 vars (Exists x phi) = ordNub $ x : vars phi
 vars (Forall x phi) = ordNub $ x : vars phi
-
-freshIn :: VarName -> Formula -> Bool
-x `freshIn` phi = x `notElem` vars phi
-
-freshVariant :: VarName -> Formula -> VarName
-freshVariant x phi = head [y | y <- variants x, y `freshIn` phi]
 
 fv :: Formula -> [VarName]
 fv T = []
@@ -192,10 +187,6 @@ nnf (phi `Iff` psi) = (nnfPhi `Or` notOfNnf nnfPsi) `And` (nnfPsi `Or` notOfNnf 
 nnf (Forall v phi) = Forall v (nnf phi)
 nnf (Exists v phi) = Exists v (nnf phi)
 
-type VarMapping = Map.Map VarName VarName
-
-type VarNameSource = Map.Map VarName [VarName]
-
 pnfOfNnfBinOp :: Formula -> Formula -> (Formula -> Formula -> Formula) -> Formula
 pnfOfNnfBinOp (Forall v1 phi) (Forall v2 psi) op = Forall v1 (Forall v2 (pnfOfNnf (phi `op` psi)))
 pnfOfNnfBinOp (Exists v1 phi) (Exists v2 psi) op = Exists v1 (Exists v2 (pnfOfNnf (phi `op` psi)))
@@ -256,12 +247,6 @@ skolemise phi = inPnf
     replaced = substitute Map.empty [] withFresh
     inPnf = pnf replaced
 
-type Arity = Int
-
-type Signature = [(FunName, Arity)]
-
-type FunSignature = Map.Map Arity [FunName]
-
 sigT :: Term -> Signature
 sigT (Var _) = []
 sigT (Fun f ts) = ordNub $ (f, length ts) : concatMap sigT ts
@@ -279,7 +264,7 @@ sig (Exists _ phi) = sig phi
 sig (Forall _ phi) = sig phi
 
 constants :: Signature -> [Term]
-constants s = if null xs then [Fun "dummy" []] else xs
+constants s = if null xs then [Fun "c" []] else xs
   where
     xs = [Fun c [] | (c, 0) <- s]
 
@@ -309,8 +294,6 @@ universe ts acc fs = if Map.null fs then ts else ordNub $ go ts acc
       where
         ts' = applyFunctions fs as acc
         acc' = ordNub $ acc ++ ts'
-
-type VarAssignment = Map.Map VarName Term
 
 withAssignmentT :: VarAssignment -> Term -> Term
 withAssignmentT c (Var n) = case Map.lookup n c of
@@ -386,42 +369,6 @@ tautology phi = or unSat
     skol = skolemise (Not gen)
     phi' = noUniversalPrefix skol
     gi = groundInstances phi'
-    phis = map conjunction $ prefixes gi
+    pref = prefixes gi
+    phis = map conjunction pref
     unSat = map (not . sat) phis
-
-failing :: Formula
-failing = Exists "y" (Forall "x" (Implies (Rel "a" [Var "y"]) (Rel "a" [Var "x"])))
-
-failing2 :: Formula
-failing2 =
-  Implies
-    ( And
-        (Exists "x" (Rel "p" [Var "x"]))
-        ( And
-            (Exists "x" (Rel "m" [Var "x"]))
-            ( And
-                (Exists "x" (Rel "s" [Var "x"]))
-                ( And
-                    (Forall "x" (Implies (Rel "m" [Var "x"]) (Rel "p" [Var "x"])))
-                    (Forall "x" (Implies (Rel "s" [Var "x"]) (Rel "m" [Var "x"])))
-                )
-            )
-        )
-    )
-    (Forall "x" (Implies (Rel "s" [Var "x"]) (Rel "p" [Var "x"])))
-
--- test :: Bool
--- test = tautology failing2
-
--- test = do
---   putStr $
---     intercalate "\n" $
---       map show $
---         take 100 $
---           universe [Fun "c" []] [Fun "c" []] (Map.fromList [(1, ["f"]), (2, ["g"])])
--- test = do
---   putStr $
---     intercalate "\n" $
---       map show $
---         take 10 $
---           groundInstances (Implies (Rel "a" [Var "y"]) (Rel "a" [Fun "x" [Var "y", Var "z"]]))
