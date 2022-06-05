@@ -8,9 +8,8 @@ import Control.Monad.Trans.State (State, evalState, get, put)
 import Data.List (delete, intercalate, sort)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
-import GHC.List (foldl')
 import System.IO.Unsafe (unsafePerformIO)
-import Util (functions, prefixes, update, ordNub)
+import Util (functions, ordNub, prefixes, update)
 
 type VarName = String
 
@@ -285,10 +284,10 @@ constants s = if null xs then [Fun "dummy" []] else xs
     xs = [Fun c [] | (c, 0) <- s]
 
 notConstants :: Signature -> FunSignature
-notConstants s = foldl' update Map.empty notConst
+notConstants s = foldr update Map.empty notConst
   where
     notConst = filter (\(_, c) -> c > 0) s
-    update acc (n, a) = Map.insert a ns' acc
+    update (n, a) acc = Map.insert a ns' acc
       where
         ns' = case Map.lookup a acc of
           Nothing -> [n]
@@ -303,7 +302,7 @@ applyFunctions fs as ts = concatMap applyCombined as
     applyCombined a = combineArgs (fs Map.! a) (aritiesArgs Map.! a)
 
 universe :: [Term] -> [Term] -> FunSignature -> [Term]
-universe ts acc fs = ordNub $ go ts acc
+universe ts acc fs = if Map.null fs then ts else ordNub $ go ts acc
   where
     as = Map.keys fs
     go ts acc = ts ++ go ts' acc'
@@ -334,11 +333,11 @@ withAssignment f@(Forall _ _) _ = error $ "expected quantifier-free formula: " +
 groundInstances :: Formula -> [Formula]
 groundInstances phi = ordNub $ map (withAssignment phi) cases
   where
-    s = sig phi
-    ts = constants s
-    fs = notConstants s
-    vs = sort $ fv phi
-    nvs = length vs
+    s = sig phi -- `debug` "s"
+    ts = constants s -- `debug` "ts"
+    fs = notConstants s -- `debug` "fs"
+    vs = sort (fv phi) -- `debug` "vs"
+    nvs = length vs -- `debug` "nvs"
     us = universe ts ts fs
     partUs = prefixes us
     varAssForParUs part = map (Map.fromAscList . zip vs) (replicateM nvs part)
@@ -393,8 +392,26 @@ tautology phi = or unSat
 failing :: Formula
 failing = Exists "y" (Forall "x" (Implies (Rel "a" [Var "y"]) (Rel "a" [Var "x"])))
 
-test :: Bool
-test = tautology failing
+failing2 :: Formula
+failing2 =
+  Implies
+    ( And
+        (Exists "x" (Rel "p" [Var "x"]))
+        ( And
+            (Exists "x" (Rel "m" [Var "x"]))
+            ( And
+                (Exists "x" (Rel "s" [Var "x"]))
+                ( And
+                    (Forall "x" (Implies (Rel "m" [Var "x"]) (Rel "p" [Var "x"])))
+                    (Forall "x" (Implies (Rel "s" [Var "x"]) (Rel "m" [Var "x"])))
+                )
+            )
+        )
+    )
+    (Forall "x" (Implies (Rel "s" [Var "x"]) (Rel "p" [Var "x"])))
+
+-- test :: Bool
+-- test = tautology failing2
 
 -- test = do
 --   putStr $
