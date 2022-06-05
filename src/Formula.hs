@@ -41,6 +41,8 @@ type FunSignature = Map.Map Arity [FunName]
 
 type VarAssignment = Map.Map VarName Term
 
+type Substitution = Map.Map VarName Term
+
 varsT :: Term -> [VarName]
 varsT (Var x) = [x]
 varsT (Fun _ ts) = ordNub $ concatMap varsT ts
@@ -94,10 +96,8 @@ rename x y (Exists z phi)
   | z == x = Exists z phi
   | otherwise = Exists z (rename x y phi)
 
-type Substitution = VarName -> Term
-
 substT :: Substitution -> Term -> Term
-substT sigma (Var x) = sigma x
+substT sigma (Var x) = sigma Map.! x
 substT sigma (Fun f ts) = Fun f (map (substT sigma) ts)
 
 subst :: Substitution -> Formula -> Formula
@@ -344,10 +344,10 @@ sat phi = or [ev int phi | int <- fs]
     atoms = atomicFormulas phi
     fs = functions atoms [True, False]
 
-    ev :: (Formula -> Bool) -> Formula -> Bool
+    ev :: Map.Map Formula Bool -> Formula -> Bool
     ev int T = True
     ev int F = False
-    ev int atom@(Rel _ _) = int atom
+    ev int atom@(Rel _ _) = int Map.! atom
     ev int (Not phi) = not (ev int phi)
     ev int (Or phi psi) = ev int phi || ev int psi
     ev int (And phi psi) = ev int phi && ev int psi
