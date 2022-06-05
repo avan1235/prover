@@ -1,11 +1,11 @@
 module Util where
 
-import Debug.Trace (trace)
 import qualified Data.Map as Map
+import qualified Data.Set as Set
+import Debug.Trace (trace)
 
-debug :: Show a => a -> String -> a
--- debug o _ = o
-debug o name = trace (name ++ " = " ++ show o) o
+-- debug :: Show a => a -> String -> a
+-- debug o name = trace (name ++ " = " ++ show o) o
 
 update :: Eq a => (a -> b) -> a -> b -> a -> b
 update f a b x
@@ -17,7 +17,7 @@ partitions [] = [[]]
 partitions (x : xs) = [[x] : yss | yss <- partitions xs] ++ [(x : ys) : yss | (ys : yss) <- partitions xs]
 
 cartProd :: Int -> [a] -> Map.Map Int [[a]]
-cartProd n xs = Map.fromAscList $ map key [1..n]
+cartProd n xs = Map.fromAscList $ map key [1 .. n]
   where
     key x = (x, go x)
     go 0 = [[]]
@@ -42,3 +42,17 @@ merges = foldr merge []
 functions :: Eq a => [a] -> [b] -> [a -> b]
 functions [] _ = [undefined]
 functions (a : as) bs = merges [[update f a b | f <- functions as bs] | b <- bs]
+
+prefixes :: [a] -> [[a]]
+prefixes xs = drop 1 $ foldr f [[]] xs
+  where
+    f x acc = [] : map (x :) acc
+
+ordNub :: Ord a => [a] -> [a]
+ordNub = go Set.empty
+  where
+    go _ [] = []
+    go acc (x : xs) =
+      if Set.member x acc
+        then go acc xs
+        else x : go (Set.insert x acc) xs

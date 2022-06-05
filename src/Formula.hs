@@ -3,14 +3,14 @@
 
 module Formula where
 
-import Control.Monad (liftM, liftM2)
+import Control.Monad (liftM, liftM2, replicateM)
 import Control.Monad.Trans.State (State, evalState, get, put)
-import Data.List (delete, nub)
+import Data.List (delete, intercalate, sort)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
-import System.IO.Unsafe (unsafePerformIO)
-import Util (functions, update, debug)
 import GHC.List (foldl')
+import System.IO.Unsafe (unsafePerformIO)
+import Util (functions, prefixes, update, ordNub)
 
 type VarName = String
 
@@ -18,11 +18,11 @@ type FunName = String
 
 type RelName = String
 
-data Term = Var VarName | Fun FunName [Term] deriving (Eq, Show)
+data Term = Var VarName | Fun FunName [Term] deriving (Eq, Show, Ord)
 
 varsT :: Term -> [VarName]
 varsT (Var x) = [x]
-varsT (Fun _ ts) = nub $ concatMap varsT ts
+varsT (Fun _ ts) = ordNub $ concatMap varsT ts
 
 variants :: VarName -> [VarName]
 variants x = x : [x ++ show n | n <- [0 ..]]
@@ -46,19 +46,19 @@ data Formula
   | Iff Formula Formula
   | Exists VarName Formula
   | Forall VarName Formula
-  deriving (Eq, Show)
+  deriving (Eq, Show, Ord)
 
 vars :: Formula -> [VarName]
 vars T = []
 vars F = []
 vars (Rel _ ts) = varsT (Fun "dummy" ts)
 vars (Not phi) = vars phi
-vars (And phi psi) = nub $ vars phi ++ vars psi
-vars (Or phi psi) = nub $ vars phi ++ vars psi
-vars (Implies phi psi) = nub $ vars phi ++ vars psi
-vars (Iff phi psi) = nub $ vars phi ++ vars psi
-vars (Exists x phi) = nub $ x : vars phi
-vars (Forall x phi) = nub $ x : vars phi
+vars (And phi psi) = ordNub $ vars phi ++ vars psi
+vars (Or phi psi) = ordNub $ vars phi ++ vars psi
+vars (Implies phi psi) = ordNub $ vars phi ++ vars psi
+vars (Iff phi psi) = ordNub $ vars phi ++ vars psi
+vars (Exists x phi) = ordNub $ x : vars phi
+vars (Forall x phi) = ordNub $ x : vars phi
 
 freshIn :: VarName -> Formula -> Bool
 x `freshIn` phi = x `notElem` vars phi
@@ -71,10 +71,10 @@ fv T = []
 fv F = []
 fv (Rel _ ts) = varsT (Fun "dummy" ts)
 fv (Not phi) = fv phi
-fv (And phi psi) = nub $ fv phi ++ fv psi
-fv (Or phi psi) = nub $ fv phi ++ fv psi
-fv (Implies phi psi) = nub $ fv phi ++ fv psi
-fv (Iff phi psi) = nub $ fv phi ++ fv psi
+fv (And phi psi) = ordNub $ fv phi ++ fv psi
+fv (Or phi psi) = ordNub $ fv phi ++ fv psi
+fv (Implies phi psi) = ordNub $ fv phi ++ fv psi
+fv (Iff phi psi) = ordNub $ fv phi ++ fv psi
 fv (Exists x phi) = delete x $ fv phi
 fv (Forall x phi) = delete x $ fv phi
 
@@ -261,19 +261,21 @@ type Arity = Int
 
 type Signature = [(FunName, Arity)]
 
+type FunSignature = Map.Map Arity [FunName]
+
 sigT :: Term -> Signature
 sigT (Var _) = []
-sigT (Fun f ts) = nub $ (f, length ts) : concatMap sigT ts
+sigT (Fun f ts) = ordNub $ (f, length ts) : concatMap sigT ts
 
 sig :: Formula -> Signature
 sig T = []
 sig F = []
 sig (Rel r ts) = concatMap sigT ts
 sig (Not phi) = sig phi
-sig (And phi psi) = nub $ sig phi ++ sig psi
-sig (Or phi psi) = nub $ sig phi ++ sig psi
-sig (Implies phi psi) = nub $ sig phi ++ sig psi
-sig (Iff phi psi) = nub $ sig phi ++ sig psi
+sig (And phi psi) = ordNub $ sig phi ++ sig psi
+sig (Or phi psi) = ordNub $ sig phi ++ sig psi
+sig (Implies phi psi) = ordNub $ sig phi ++ sig psi
+sig (Iff phi psi) = ordNub $ sig phi ++ sig psi
 sig (Exists _ phi) = sig phi
 sig (Forall _ phi) = sig phi
 
@@ -282,66 +284,75 @@ constants s = if null xs then [Fun "dummy" []] else xs
   where
     xs = [Fun c [] | (c, 0) <- s]
 
-notConstants :: Signature -> Map.Map Arity [FunName]
+notConstants :: Signature -> FunSignature
 notConstants s = foldl' update Map.empty notConst
   where
     notConst = filter (\(_, c) -> c > 0) s
-    update acc (n, a) =
-      Map.insert
-        a
-        ( case Map.lookup a acc of
-            Nothing -> [n]
-            Just ns -> n : ns
-        )
-        acc
+    update acc (n, a) = Map.insert a ns' acc
+      where
+        ns' = case Map.lookup a acc of
+          Nothing -> [n]
+          Just ns -> n : ns
 
-universe :: [Term] -> Signature -> [Term]
-universe [] _ = error "expected not empty set constant terms"
-universe ts [] = ts
-universe ts fs = ts ++ universe highOrder fs
+applyFunctions :: FunSignature -> [Arity] -> [Term] -> [Term]
+applyFunctions fs as ts = concatMap applyCombined as
   where
-    arities = map snd fs
-    highOrder = ts
+    arityArgs a _ = replicateM a ts
+    aritiesArgs = Map.mapWithKey arityArgs fs
+    combineArgs fs args = [Fun f a | a <- args, f <- fs]
+    applyCombined a = combineArgs (fs Map.! a) (aritiesArgs Map.! a)
+
+universe :: [Term] -> [Term] -> FunSignature -> [Term]
+universe ts acc fs = ordNub $ go ts acc
+  where
+    as = Map.keys fs
+    go ts acc = ts ++ go ts' acc'
+      where
+        ts' = applyFunctions fs as acc
+        acc' = ordNub $ acc ++ ts'
 
 type VarAssignment = Map.Map VarName Term
 
-lattice :: [VarName] -> [Term] -> [VarAssignment] -> [VarAssignment]
-lattice [] _ ls = ls
-lattice (x : xs) as ls = lattice xs as $ concatMap (\l -> map (\a -> Map.insert x a l) as) ls
-
-withCaseT :: VarAssignment -> Term -> Term
-withCaseT c (Var n) = case Map.lookup n c of
-  Nothing -> Var n
+withAssignmentT :: VarAssignment -> Term -> Term
+withAssignmentT c (Var n) = case Map.lookup n c of
   Just n' -> n'
-withCaseT c (Fun f ts) = Fun f (map (withCaseT c) ts)
+  Nothing -> error $ "unknown variable name in formula: " ++ show n
+withAssignmentT c (Fun f ts) = Fun f (map (withAssignmentT c) ts)
 
-withCase :: Formula -> VarAssignment -> Formula
-withCase T _ = T
-withCase F _ = F
-withCase (Rel r ts) c = Rel r (map (withCaseT c) ts)
-withCase (Not phi) c = Not (withCase phi c)
-withCase (And phi psi) c = withCase phi c `And` withCase psi c
-withCase (Or phi psi) c = withCase phi c `Or` withCase psi c
-withCase (Implies phi psi) c = withCase phi c `Implies` withCase psi c
-withCase (Iff phi psi) c = withCase phi c `Iff` withCase psi c
-withCase f@(Exists _ _) _ = error $ "expected quantifier-free formula: " ++ show f
-withCase f@(Forall _ _) _ = error $ "expected quantifier-free formula: " ++ show f
+withAssignment :: Formula -> VarAssignment -> Formula
+withAssignment T _ = T
+withAssignment F _ = F
+withAssignment (Rel r ts) c = Rel r (map (withAssignmentT c) ts)
+withAssignment (Not phi) c = Not (withAssignment phi c)
+withAssignment (And phi psi) c = withAssignment phi c `And` withAssignment psi c
+withAssignment (Or phi psi) c = withAssignment phi c `Or` withAssignment psi c
+withAssignment (Implies phi psi) c = withAssignment phi c `Implies` withAssignment psi c
+withAssignment (Iff phi psi) c = withAssignment phi c `Iff` withAssignment psi c
+withAssignment f@(Exists _ _) _ = error $ "expected quantifier-free formula: " ++ show f
+withAssignment f@(Forall _ _) _ = error $ "expected quantifier-free formula: " ++ show f
 
-groundInstances :: Formula -> [Term] -> [Formula]
-groundInstances phi ts = map (withCase phi) cases
+groundInstances :: Formula -> [Formula]
+groundInstances phi = ordNub $ map (withAssignment phi) cases
   where
-    vs = fv phi
-    cases = lattice vs ts [Map.empty]
+    s = sig phi
+    ts = constants s
+    fs = notConstants s
+    vs = sort $ fv phi
+    nvs = length vs
+    us = universe ts ts fs
+    partUs = prefixes us
+    varAssForParUs part = map (Map.fromAscList . zip vs) (replicateM nvs part)
+    cases = concatMap varAssForParUs partUs
 
 atomicFormulas :: Formula -> [Formula]
 atomicFormulas T = []
 atomicFormulas F = []
 atomicFormulas phi@(Rel _ _) = [phi]
 atomicFormulas (Not phi) = atomicFormulas phi
-atomicFormulas (And phi psi) = nub $ atomicFormulas phi ++ atomicFormulas psi
-atomicFormulas (Or phi psi) = nub $ atomicFormulas phi ++ atomicFormulas psi
-atomicFormulas (Implies phi psi) = nub $ atomicFormulas phi ++ atomicFormulas psi
-atomicFormulas (Iff phi psi) = nub $ atomicFormulas phi ++ atomicFormulas psi
+atomicFormulas (And phi psi) = ordNub $ atomicFormulas phi ++ atomicFormulas psi
+atomicFormulas (Or phi psi) = ordNub $ atomicFormulas phi ++ atomicFormulas psi
+atomicFormulas (Implies phi psi) = ordNub $ atomicFormulas phi ++ atomicFormulas psi
+atomicFormulas (Iff phi psi) = ordNub $ atomicFormulas phi ++ atomicFormulas psi
 atomicFormulas (Exists x phi) = atomicFormulas phi
 atomicFormulas (Forall x phi) = atomicFormulas phi
 
@@ -364,19 +375,36 @@ noUniversalPrefix :: Formula -> Formula
 noUniversalPrefix (Forall _ phi) = noUniversalPrefix phi
 noUniversalPrefix phi = phi
 
+conjunction :: [Formula] -> Formula
+conjunction [] = error "expected not empty formula candidates"
+conjunction [x] = x
+conjunction (x : xs) = x `And` conjunction xs
+
 tautology :: Formula -> Bool
-tautology phi = not $ all sat gi
+tautology phi = or unSat
   where
     gen = generalise phi
     skol = skolemise (Not gen)
     phi' = noUniversalPrefix skol
-    s = sig phi'
-    c = constants s `debug` "c"
-    fs = notConstants s `debug` "fs"
-    gi = groundInstances phi' c
+    gi = groundInstances phi'
+    phis = map conjunction $ prefixes gi
+    unSat = map (not . sat) phis
 
 failing :: Formula
 failing = Exists "y" (Forall "x" (Implies (Rel "a" [Var "y"]) (Rel "a" [Var "x"])))
 
 test :: Bool
 test = tautology failing
+
+-- test = do
+--   putStr $
+--     intercalate "\n" $
+--       map show $
+--         take 100 $
+--           universe [Fun "c" []] [Fun "c" []] (Map.fromList [(1, ["f"]), (2, ["g"])])
+-- test = do
+--   putStr $
+--     intercalate "\n" $
+--       map show $
+--         take 10 $
+--           groundInstances (Implies (Rel "a" [Var "y"]) (Rel "a" [Fun "x" [Var "y", Var "z"]]))
