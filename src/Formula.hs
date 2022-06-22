@@ -4,6 +4,7 @@ import Control.Monad (liftM, liftM2, replicateM)
 import Control.Monad.Trans.State (State, evalState, get, put)
 import Data.List (delete, intercalate, sort)
 import qualified Data.Map as Map
+import qualified Data.Set as Set
 import Util (functions, ordNub, prefixes, update)
 
 type VarName = String
@@ -31,6 +32,16 @@ data Formula
   | Forall VarName Formula
   deriving (Eq, Show, Ord)
 
+type PropName = (RelName, [Term])
+
+type Vars = [PropName]
+
+data Literal = Pos PropName | Neg PropName deriving (Eq, Show, Ord)
+
+type CNFClause = [Literal]
+
+type CNF = [CNFClause]
+
 type VarMapping = Map.Map VarName VarName
 
 type Arity = Int
@@ -42,6 +53,14 @@ type FunSignature = Map.Map Arity [FunName]
 type VarAssignment = Map.Map VarName Term
 
 type Substitution = Map.Map VarName Term
+
+literal2var :: Literal -> PropName
+literal2var (Pos p) = p
+literal2var (Neg p) = p
+
+opposite :: Literal -> Literal
+opposite (Pos p) = Neg p
+opposite (Neg p) = Pos p
 
 varsT :: Term -> [VarName]
 varsT (Var x) = [x]
@@ -287,13 +306,13 @@ applyFunctions fs as ts = concatMap applyCombined as
     applyCombined a = combineArgs (fs Map.! a) (aritiesArgs Map.! a)
 
 universe :: [Term] -> [Term] -> FunSignature -> [Term]
-universe ts acc fs = if Map.null fs then ts else ordNub $ go ts acc
+universe ts acc fs = if Map.null fs then ts else go ts acc
   where
     as = Map.keys fs
     go ts acc = ts ++ go ts' acc'
       where
         ts' = applyFunctions fs as acc
-        acc' = ordNub $ acc ++ ts'
+        acc' = acc ++ ts'
 
 withAssignmentT :: VarAssignment -> Term -> Term
 withAssignmentT c (Var n) = case Map.lookup n c of
@@ -338,20 +357,217 @@ atomicFormulas (Iff phi psi) = ordNub $ atomicFormulas phi ++ atomicFormulas psi
 atomicFormulas (Exists x phi) = atomicFormulas phi
 atomicFormulas (Forall x phi) = atomicFormulas phi
 
-sat :: Formula -> Bool
-sat phi = or [ev int phi | int <- fs]
-  where
-    atoms = atomicFormulas phi
-    fs = functions atoms [True, False]
+notInVars :: Vars -> String -> Bool
+notInVars vars name = all (\(r, _) -> r /= name) vars
 
-    ev :: Map.Map Formula Bool -> Formula -> Bool
-    ev int T = True
-    ev int F = False
-    ev int atom@(Rel _ _) = int Map.! atom
-    ev int (Not phi) = not (ev int phi)
-    ev int (Or phi psi) = ev int phi || ev int psi
-    ev int (And phi psi) = ev int phi && ev int psi
-    ev _ phi = error $ "unexpected formula: " ++ show phi
+freshPropName :: Vars -> PropName
+freshPropName vars = (head $ filter (notInVars vars) $ map (("p" ++) . show) [0..], [])
+
+cnf2formula :: CNF -> Formula
+cnf2formula [] = T
+cnf2formula lss = foldr1 And (map go lss)
+  where
+    go [] = F
+    go ls = foldr1 Or (map go2 ls)
+    go2 (Pos (r, ts)) = Rel r ts
+    go2 (Neg (r, ts)) = Not (Rel r ts)
+
+positiveLiterals :: CNFClause -> Vars
+positiveLiterals ls = ordNub [p | Pos p <- ls]
+
+negativeLiterals :: CNFClause -> Vars
+negativeLiterals ls = ordNub [p | Neg p <- ls]
+
+literals :: [Literal] -> Vars
+literals ls = ordNub $ positiveLiterals ls ++ negativeLiterals ls
+
+cnf :: Formula -> CNF
+cnf = go . nnf
+  where
+    go T = []
+    go F = [[]]
+    go (Rel r ts) = [[Pos (r, ts)]]
+    go (Not (Rel r ts)) = [[Neg (r, ts)]]
+    go (phi `And` psi) = go phi ++ go psi
+    go (phi `Or` psi) = [as ++ bs | as <- go phi, bs <- go psi]
+    go f = error $ "not nnf formula " ++ show f
+
+data NoConstFormula = Simplified Formula | AlwaysTrue | AlwaysFalse deriving (Show)
+
+removeConst :: Formula -> NoConstFormula
+removeConst T = AlwaysTrue
+removeConst F = AlwaysFalse
+removeConst (Rel r ts) = Simplified (Rel r ts)
+removeConst (Not phi) = case removeConst phi of
+  AlwaysFalse -> AlwaysTrue
+  AlwaysTrue -> AlwaysFalse
+  Simplified phi' -> Simplified $ Not phi'
+removeConst (phi `And` psi) = case (removeConst phi, removeConst psi) of
+  (AlwaysFalse, _) -> AlwaysFalse
+  (_, AlwaysFalse) -> AlwaysFalse
+  (AlwaysTrue, AlwaysTrue) -> AlwaysTrue
+  (Simplified phi', AlwaysTrue) -> Simplified phi'
+  (AlwaysTrue, Simplified phi') -> Simplified phi'
+  (Simplified phi', Simplified psi') -> Simplified $ phi' `And` psi'
+removeConst (phi `Or` psi) = case (removeConst phi, removeConst psi) of
+  (_, AlwaysTrue) -> AlwaysTrue
+  (AlwaysTrue, _) -> AlwaysTrue
+  (AlwaysFalse, AlwaysFalse) -> AlwaysFalse
+  (Simplified phi', AlwaysFalse) -> Simplified phi'
+  (AlwaysFalse, Simplified phi') -> Simplified phi'
+  (Simplified phi', Simplified psi') -> Simplified $ phi' `Or` psi'
+removeConst (phi `Implies` psi) = case (removeConst phi, removeConst psi) of
+  (_, AlwaysTrue) -> AlwaysTrue
+  (AlwaysTrue, AlwaysFalse) -> AlwaysFalse
+  (AlwaysFalse, _) -> AlwaysTrue
+  (AlwaysTrue, Simplified phi') -> Simplified phi'
+  (Simplified phi', AlwaysFalse) -> Simplified (Not phi')
+  (Simplified phi', Simplified psi') -> Simplified $ phi' `Implies` psi'
+removeConst (phi `Iff` psi) = case (removeConst phi, removeConst psi) of
+  (AlwaysTrue, AlwaysTrue) -> AlwaysTrue
+  (AlwaysFalse, AlwaysFalse) -> AlwaysTrue
+  (AlwaysFalse, AlwaysTrue) -> AlwaysFalse
+  (AlwaysTrue, AlwaysFalse) -> AlwaysFalse
+  (AlwaysTrue, Simplified phi') -> Simplified phi'
+  (AlwaysFalse, Simplified phi') -> Simplified (Not phi')
+  (Simplified phi', AlwaysTrue) -> Simplified phi'
+  (Simplified phi', AlwaysFalse) -> Simplified (Not phi')
+  (Simplified phi', Simplified psi') -> Simplified $ phi' `Iff` psi'
+
+ecnfNoConstBin :: Formula -> Formula -> (Formula -> Formula -> Formula) -> Vars -> (CNF, Vars, PropName)
+ecnfNoConstBin phi psi binOp vars = (nodeConstraints ++ subCnfPhi ++ subCnfPsi, nodeProp : vars'', nodeProp)
+  where
+    (subCnfPhi, vars', (phiR, phiTs)) = ecnfNoConst phi vars
+    (subCnfPsi, vars'', (psiR, psiTs)) = ecnfNoConst psi vars'
+    nodeProp@(r, ts) = freshPropName vars''
+    nodeConstraints = cnf (Rel r ts `Iff` (Rel phiR phiTs `binOp` Rel psiR psiTs))
+
+ecnfNoConst :: Formula -> Vars -> (CNF, Vars, PropName)
+ecnfNoConst (Rel r ts) vars = ([], vars, (r, ts))
+ecnfNoConst (Not phi) vars = (subCnf ++ nodeConstraints, nodeProp : vars', nodeProp)
+  where
+    (subCnf, vars', (sr, sts)) = ecnfNoConst phi vars
+    nodeProp@(r, ts) = freshPropName vars'
+    nodeConstraints = cnf $ Rel r ts `Iff` Not (Rel sr sts)
+ecnfNoConst (phi `And` psi) vars = ecnfNoConstBin phi psi And vars
+ecnfNoConst (phi `Or` psi) vars = ecnfNoConstBin phi psi Or vars
+ecnfNoConst (phi `Implies` psi) vars = ecnfNoConstBin phi psi Implies vars
+ecnfNoConst (phi `Iff` psi) vars = ecnfNoConstBin phi psi Iff vars
+ecnfNoConst f _ = error $ "unexpected const " ++ show f ++ " formula in ecnfNoConst"
+
+variables :: Formula -> Vars
+variables = ordNub . go
+  where
+    go T = []
+    go F = []
+    go (Rel r ts) = [(r, ts)]
+    go (Not phi) = go phi
+    go (And phi psi) = go phi ++ go psi
+    go (Or phi psi) = go phi ++ go psi
+    go (Implies phi psi) = go phi ++ go psi
+    go (Iff phi psi) = go phi ++ go psi
+
+ecnf :: Formula -> CNF
+ecnf f = case removeConst f of
+  AlwaysTrue -> []
+  AlwaysFalse -> [[]]
+  Simplified f' -> [Pos topProp] : f''
+    where
+      (f'', _, topProp) = ecnfNoConst f' (variables f')
+
+removeTautologies :: CNF -> CNF
+removeTautologies = filter (not . go Set.empty Set.empty)
+  where
+    go _ _ [] = False
+    go p n (Pos x : xs) = Set.member x n || go (Set.insert x p) n xs
+    go p n (Neg x : xs) = Set.member x p || go p (Set.insert x n) xs
+
+extractOneLiterals :: CNF -> (Set.Set PropName, Set.Set PropName) -> (Set.Set PropName, Set.Set PropName)
+extractOneLiterals [] acc = acc
+extractOneLiterals ([Pos x] : xs) (pos, neg) = extractOneLiterals xs (Set.insert x pos, neg)
+extractOneLiterals ([Neg x] : xs) (pos, neg) = extractOneLiterals xs (pos, Set.insert x neg)
+extractOneLiterals (_ : xs) acc = extractOneLiterals xs acc
+
+clauseContainsLiteralFrom :: Set.Set PropName -> Set.Set PropName -> CNFClause -> Bool
+clauseContainsLiteralFrom _ _ [] = False
+clauseContainsLiteralFrom pos neg (Pos x : xs) = Set.member x pos || clauseContainsLiteralFrom pos neg xs
+clauseContainsLiteralFrom pos neg (Neg x : xs) = Set.member x neg || clauseContainsLiteralFrom pos neg xs
+
+cleanClause :: Set.Set PropName -> Set.Set PropName -> CNFClause -> CNFClause
+cleanClause pos neg = go
+  where
+    go [] = []
+    go (Neg x : xs) = if Set.member x pos then go xs else Neg x : go xs
+    go (Pos x : xs) = if Set.member x neg then go xs else Pos x : go xs
+
+oneLiteral :: CNF -> CNF
+oneLiteral f =
+  if Set.disjoint pos neg
+    then map (cleanClause pos neg) $ filter (not . clauseContainsLiteralFrom pos neg) f
+    else [[]]
+  where
+    (pos, neg) = extractOneLiterals f (Set.empty, Set.empty)
+
+extractLiteralsFromCNFClause :: (Set.Set PropName, Set.Set PropName) -> CNFClause -> (Set.Set PropName, Set.Set PropName)
+extractLiteralsFromCNFClause acc [] = acc
+extractLiteralsFromCNFClause (pos, neg) (Pos x : xs) = extractLiteralsFromCNFClause (Set.insert x pos, neg) xs
+extractLiteralsFromCNFClause (pos, neg) (Neg x : xs) = extractLiteralsFromCNFClause (pos, Set.insert x neg) xs
+
+extractPosNegLiteralsFromCNF :: CNF -> (Set.Set PropName, Set.Set PropName) -> (Set.Set PropName, Set.Set PropName)
+extractPosNegLiteralsFromCNF xs acc = foldl extractLiteralsFromCNFClause acc xs
+
+affirmativeNegative :: CNF -> CNF
+affirmativeNegative f = filter (not . clauseContainsLiteralFrom onlyPos onlyNeg) f
+  where
+    (pos, neg) = extractPosNegLiteralsFromCNF f (Set.empty, Set.empty)
+    onlyPos = pos `Set.difference` neg
+    onlyNeg = neg `Set.difference` pos
+
+withPositive :: PropName -> CNF -> CNF
+withPositive x f = map (filter (/= Pos x)) $ filter (elem $ Pos x) f
+
+withNegative :: PropName -> CNF -> CNF
+withNegative x f = map (filter (/= Neg x)) $ filter (elem $ Neg x) f
+
+withNo :: PropName -> CNF -> CNF
+withNo x = filter notAnyLiteral
+  where
+    notAnyLiteral [] = True
+    notAnyLiteral (Pos y : xs) = x /= y && notAnyLiteral xs
+    notAnyLiteral (Neg y : xs) = x /= y && notAnyLiteral xs
+
+resolutionFor :: PropName -> CNF -> CNF
+resolutionFor x f = other ++ [p ++ n | p <- pos, n <- neg]
+  where
+    pos = withPositive x f
+    neg = withNegative x f
+    other = withNo x f
+
+resolution :: CNF -> CNF
+resolution [] = []
+resolution [[]] = [[]]
+resolution ([] : _) = [[]]
+resolution f@((Pos x : _) : _) = resolutionFor x f
+resolution f@((Neg x : _) : _) = resolutionFor x f
+
+applyUntilFixedPoint :: CNF -> CNF
+applyUntilFixedPoint f = if f == f' then f else applyUntilFixedPoint f'
+  where
+    goL f = let f' = oneLiteral f in if f == f' then f else goL f'
+    goA f = let f' = affirmativeNegative f in if f == f' then f else goA f'
+    f' = (goA . goL . removeTautologies) f
+
+dp :: CNF -> Bool
+dp [] = True
+dp f = notElem [] f && (not . null) f && dp f''
+  where
+    f' = applyUntilFixedPoint f
+    f'' = resolution f'
+
+satDP :: Formula -> Bool
+satDP form = dp f
+  where
+    f = ecnf form
 
 noUniversalPrefix :: Formula -> Formula
 noUniversalPrefix (Forall _ phi) = noUniversalPrefix phi
@@ -371,4 +587,4 @@ tautology phi = or unSat
     gi = groundInstances phi'
     pref = prefixes gi
     phis = map conjunction pref
-    unSat = map (not . sat) phis
+    unSat = map (not . satDP) phis
