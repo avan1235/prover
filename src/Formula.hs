@@ -3,6 +3,7 @@ module Formula where
 import Control.Monad (liftM, liftM2, replicateM)
 import Control.Monad.Trans.State (State, evalState, get, put)
 import Data.List (delete, intercalate, sort)
+import qualified Data.Sequence as Seq
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Util (functions, ordNub, prefixes, update)
@@ -32,11 +33,11 @@ data Formula
   | Forall VarName Formula
   deriving (Eq, Show, Ord)
 
-type PropName = (RelName, [Term])
+type RelSignature = (RelName, [Term])
 
-type Vars = [PropName]
+type RelSignatures = [RelSignature]
 
-data Literal = Pos PropName | Neg PropName deriving (Eq, Show, Ord)
+data Literal = Pos RelSignature | Neg RelSignature deriving (Eq, Show, Ord)
 
 type CNFClause = [Literal]
 
@@ -54,7 +55,7 @@ type VarAssignment = Map.Map VarName Term
 
 type Substitution = Map.Map VarName Term
 
-literal2var :: Literal -> PropName
+literal2var :: Literal -> RelSignature
 literal2var (Pos p) = p
 literal2var (Neg p) = p
 
@@ -357,11 +358,11 @@ atomicFormulas (Iff phi psi) = ordNub $ atomicFormulas phi ++ atomicFormulas psi
 atomicFormulas (Exists x phi) = atomicFormulas phi
 atomicFormulas (Forall x phi) = atomicFormulas phi
 
-notInVars :: Vars -> String -> Bool
-notInVars vars name = all (\(r, _) -> r /= name) vars
+notInRelSignatures :: RelSignatures -> String -> Bool
+notInRelSignatures vars name = all (\(r, _) -> r /= name) vars
 
-freshPropName :: Vars -> PropName
-freshPropName vars = (head $ filter (notInVars vars) $ map (("p" ++) . show) [0..], [])
+freshRelSignature :: RelSignatures -> RelSignature
+freshRelSignature vars = (head $ filter (notInRelSignatures vars) $ map (("p" ++) . show) [0..], [])
 
 cnf2formula :: CNF -> Formula
 cnf2formula [] = T
@@ -372,13 +373,13 @@ cnf2formula lss = foldr1 And (map go lss)
     go2 (Pos (r, ts)) = Rel r ts
     go2 (Neg (r, ts)) = Not (Rel r ts)
 
-positiveLiterals :: CNFClause -> Vars
+positiveLiterals :: CNFClause -> RelSignatures
 positiveLiterals ls = ordNub [p | Pos p <- ls]
 
-negativeLiterals :: CNFClause -> Vars
+negativeLiterals :: CNFClause -> RelSignatures
 negativeLiterals ls = ordNub [p | Neg p <- ls]
 
-literals :: [Literal] -> Vars
+literals :: [Literal] -> RelSignatures
 literals ls = ordNub $ positiveLiterals ls ++ negativeLiterals ls
 
 cnf :: Formula -> CNF
@@ -434,20 +435,20 @@ removeConst (phi `Iff` psi) = case (removeConst phi, removeConst psi) of
   (Simplified phi', AlwaysFalse) -> Simplified (Not phi')
   (Simplified phi', Simplified psi') -> Simplified $ phi' `Iff` psi'
 
-ecnfNoConstBin :: Formula -> Formula -> (Formula -> Formula -> Formula) -> Vars -> (CNF, Vars, PropName)
+ecnfNoConstBin :: Formula -> Formula -> (Formula -> Formula -> Formula) -> RelSignatures -> (CNF, RelSignatures, RelSignature)
 ecnfNoConstBin phi psi binOp vars = (nodeConstraints ++ subCnfPhi ++ subCnfPsi, nodeProp : vars'', nodeProp)
   where
     (subCnfPhi, vars', (phiR, phiTs)) = ecnfNoConst phi vars
     (subCnfPsi, vars'', (psiR, psiTs)) = ecnfNoConst psi vars'
-    nodeProp@(r, ts) = freshPropName vars''
+    nodeProp@(r, ts) = freshRelSignature vars''
     nodeConstraints = cnf (Rel r ts `Iff` (Rel phiR phiTs `binOp` Rel psiR psiTs))
 
-ecnfNoConst :: Formula -> Vars -> (CNF, Vars, PropName)
+ecnfNoConst :: Formula -> RelSignatures -> (CNF, RelSignatures, RelSignature)
 ecnfNoConst (Rel r ts) vars = ([], vars, (r, ts))
 ecnfNoConst (Not phi) vars = (subCnf ++ nodeConstraints, nodeProp : vars', nodeProp)
   where
     (subCnf, vars', (sr, sts)) = ecnfNoConst phi vars
-    nodeProp@(r, ts) = freshPropName vars'
+    nodeProp@(r, ts) = freshRelSignature vars'
     nodeConstraints = cnf $ Rel r ts `Iff` Not (Rel sr sts)
 ecnfNoConst (phi `And` psi) vars = ecnfNoConstBin phi psi And vars
 ecnfNoConst (phi `Or` psi) vars = ecnfNoConstBin phi psi Or vars
@@ -455,7 +456,7 @@ ecnfNoConst (phi `Implies` psi) vars = ecnfNoConstBin phi psi Implies vars
 ecnfNoConst (phi `Iff` psi) vars = ecnfNoConstBin phi psi Iff vars
 ecnfNoConst f _ = error $ "unexpected const " ++ show f ++ " formula in ecnfNoConst"
 
-variables :: Formula -> Vars
+variables :: Formula -> RelSignatures
 variables = ordNub . go
   where
     go T = []
@@ -482,18 +483,18 @@ removeTautologies = filter (not . go Set.empty Set.empty)
     go p n (Pos x : xs) = Set.member x n || go (Set.insert x p) n xs
     go p n (Neg x : xs) = Set.member x p || go p (Set.insert x n) xs
 
-extractOneLiterals :: CNF -> (Set.Set PropName, Set.Set PropName) -> (Set.Set PropName, Set.Set PropName)
+extractOneLiterals :: CNF -> (Set.Set RelSignature, Set.Set RelSignature) -> (Set.Set RelSignature, Set.Set RelSignature)
 extractOneLiterals [] acc = acc
 extractOneLiterals ([Pos x] : xs) (pos, neg) = extractOneLiterals xs (Set.insert x pos, neg)
 extractOneLiterals ([Neg x] : xs) (pos, neg) = extractOneLiterals xs (pos, Set.insert x neg)
 extractOneLiterals (_ : xs) acc = extractOneLiterals xs acc
 
-clauseContainsLiteralFrom :: Set.Set PropName -> Set.Set PropName -> CNFClause -> Bool
+clauseContainsLiteralFrom :: Set.Set RelSignature -> Set.Set RelSignature -> CNFClause -> Bool
 clauseContainsLiteralFrom _ _ [] = False
 clauseContainsLiteralFrom pos neg (Pos x : xs) = Set.member x pos || clauseContainsLiteralFrom pos neg xs
 clauseContainsLiteralFrom pos neg (Neg x : xs) = Set.member x neg || clauseContainsLiteralFrom pos neg xs
 
-cleanClause :: Set.Set PropName -> Set.Set PropName -> CNFClause -> CNFClause
+cleanClause :: Set.Set RelSignature -> Set.Set RelSignature -> CNFClause -> CNFClause
 cleanClause pos neg = go
   where
     go [] = []
@@ -508,12 +509,12 @@ oneLiteral f =
   where
     (pos, neg) = extractOneLiterals f (Set.empty, Set.empty)
 
-extractLiteralsFromCNFClause :: (Set.Set PropName, Set.Set PropName) -> CNFClause -> (Set.Set PropName, Set.Set PropName)
+extractLiteralsFromCNFClause :: (Set.Set RelSignature, Set.Set RelSignature) -> CNFClause -> (Set.Set RelSignature, Set.Set RelSignature)
 extractLiteralsFromCNFClause acc [] = acc
 extractLiteralsFromCNFClause (pos, neg) (Pos x : xs) = extractLiteralsFromCNFClause (Set.insert x pos, neg) xs
 extractLiteralsFromCNFClause (pos, neg) (Neg x : xs) = extractLiteralsFromCNFClause (pos, Set.insert x neg) xs
 
-extractPosNegLiteralsFromCNF :: CNF -> (Set.Set PropName, Set.Set PropName) -> (Set.Set PropName, Set.Set PropName)
+extractPosNegLiteralsFromCNF :: CNF -> (Set.Set RelSignature, Set.Set RelSignature) -> (Set.Set RelSignature, Set.Set RelSignature)
 extractPosNegLiteralsFromCNF xs acc = foldl extractLiteralsFromCNFClause acc xs
 
 affirmativeNegative :: CNF -> CNF
@@ -523,20 +524,20 @@ affirmativeNegative f = filter (not . clauseContainsLiteralFrom onlyPos onlyNeg)
     onlyPos = pos `Set.difference` neg
     onlyNeg = neg `Set.difference` pos
 
-withPositive :: PropName -> CNF -> CNF
+withPositive :: RelSignature -> CNF -> CNF
 withPositive x f = map (filter (/= Pos x)) $ filter (elem $ Pos x) f
 
-withNegative :: PropName -> CNF -> CNF
+withNegative :: RelSignature -> CNF -> CNF
 withNegative x f = map (filter (/= Neg x)) $ filter (elem $ Neg x) f
 
-withNo :: PropName -> CNF -> CNF
+withNo :: RelSignature -> CNF -> CNF
 withNo x = filter notAnyLiteral
   where
     notAnyLiteral [] = True
     notAnyLiteral (Pos y : xs) = x /= y && notAnyLiteral xs
     notAnyLiteral (Neg y : xs) = x /= y && notAnyLiteral xs
 
-resolutionFor :: PropName -> CNF -> CNF
+resolutionFor :: RelSignature -> CNF -> CNF
 resolutionFor x f = other ++ [p ++ n | p <- pos, n <- neg]
   where
     pos = withPositive x f
