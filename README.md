@@ -4,3 +4,7 @@
 
 - `make` creates `FO-prover` binary
 - `make test` runs all tests
+
+## Author
+
+Maciej Procyk 406304
